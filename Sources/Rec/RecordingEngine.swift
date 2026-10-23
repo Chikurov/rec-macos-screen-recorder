@@ -55,10 +55,7 @@ final class RecordingEngine: NSObject {
     private var sessionStartTime: CMTime?
     private var lastVideoBuffer: CMSampleBuffer?
     private var lastVideoTime = CMTime.negativeInfinity
-    private var isPaused = false
-    private var pauseStartedAt: CMTime?
-    private var resumedAt = CMTime.zero
-    private var pausedTotal = CMTime.zero
+    private var timeline = PauseTimeline()
 
     func start(_ options: RecordingOptions) async throws {
         self.options = options
@@ -116,22 +113,13 @@ final class RecordingEngine: NSObject {
 
     func pause() {
         queue.async { [self] in
-            guard !isPaused else { return }
-            isPaused = true
-            pauseStartedAt = CMClockGetTime(hostClock)
+            timeline.pause(at: CMClockGetTime(hostClock))
         }
     }
 
     func resume() {
         queue.async { [self] in
-            guard isPaused else { return }
-            let now = CMClockGetTime(hostClock)
-            if let pauseStartedAt {
-                pausedTotal = pausedTotal + (now - pauseStartedAt)
-            }
-            pauseStartedAt = nil
-            resumedAt = now
-            isPaused = false
+            timeline.resume(at: CMClockGetTime(hostClock))
         }
     }
 
@@ -215,7 +203,7 @@ final class RecordingEngine: NSObject {
                     return
                 }
 
-                let stopTime = (pauseStartedAt ?? CMClockGetTime(hostClock)) - pausedTotal
+                let stopTime = timeline.stopTime(now: CMClockGetTime(hostClock))
                 if stopTime > lastVideoTime,
                    let videoInput, videoInput.isReadyForMoreMediaData,
                    let finalFrame = Self.shifted(lastVideoBuffer, by: lastVideoBuffer.presentationTimeStamp - stopTime) {
@@ -235,11 +223,9 @@ final class RecordingEngine: NSObject {
     }
 
     private func handleVideo(_ sampleBuffer: CMSampleBuffer) {
-        guard let writer, let videoInput, !isPaused, writer.status == .writing else { return }
-        let originalTime = sampleBuffer.presentationTimeStamp
-        guard originalTime >= resumedAt else { return }
-
-        let time = originalTime - pausedTotal
+        guard let writer, let videoInput, writer.status == .writing,
+              let time = timeline.outputTime(for: sampleBuffer.presentationTimeStamp) else { return }
+        let pausedTotal = timeline.pausedTotal
         if sessionStartTime == nil {
             writer.startSession(atSourceTime: time)
             sessionStartTime = time
@@ -254,11 +240,11 @@ final class RecordingEngine: NSObject {
     }
 
     private func handleAudio(_ sampleBuffer: CMSampleBuffer, track: AudioTrackWriter?, clockOffset: CMTime = .zero) {
-        guard let track, let writer, let sessionStartTime, !isPaused, writer.status == .writing else { return }
-        let hostTime = sampleBuffer.presentationTimeStamp - clockOffset
-        guard hostTime >= resumedAt, hostTime - pausedTotal >= sessionStartTime else { return }
+        guard let track, let writer, let sessionStartTime, writer.status == .writing,
+              let time = timeline.outputTime(for: sampleBuffer.presentationTimeStamp - clockOffset),
+              time >= sessionStartTime else { return }
 
-        let offset = clockOffset + pausedTotal
+        let offset = clockOffset + timeline.pausedTotal
         guard let buffer = offset == .zero ? sampleBuffer : Self.shifted(sampleBuffer, by: offset) else { return }
         track.append(buffer, sessionStart: sessionStartTime)
     }

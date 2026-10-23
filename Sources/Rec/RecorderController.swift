@@ -212,15 +212,10 @@ final class RecorderController: ObservableObject {
                   let display = content.displays.first(where: { $0.displayID == screen.displayID }) else {
                 throw CaptureSetupError("Не удалось определить экран для области.")
             }
-            let clipped = rect.intersection(screen.frame)
+            let area = Self.captureArea(for: rect, in: screen.frame)
             filter = displayFilter(display)
-            sourceRect = CGRect(
-                x: clipped.minX - screen.frame.minX,
-                y: screen.frame.maxY - clipped.maxY,
-                width: clipped.width,
-                height: clipped.height
-            )
-            pointSize = clipped.size
+            sourceRect = area
+            pointSize = area.size
         }
 
         let scale = CGFloat(filter.pointPixelScale)
@@ -247,7 +242,17 @@ final class RecorderController: ObservableObject {
         return content.displays.first { $0.displayID == CGMainDisplayID() } ?? content.displays[0]
     }
 
-    private static func encodableSize(_ size: CGSize) -> CGSize {
+    nonisolated static func captureArea(for rect: NSRect, in screenFrame: NSRect) -> CGRect {
+        let clipped = rect.intersection(screenFrame)
+        return CGRect(
+            x: clipped.minX - screenFrame.minX,
+            y: screenFrame.maxY - clipped.maxY,
+            width: clipped.width,
+            height: clipped.height
+        )
+    }
+
+    nonisolated static func encodableSize(_ size: CGSize) -> CGSize {
         let maximum: CGFloat = 3840
         let factor = min(1, maximum / max(size.width, size.height))
         func even(_ value: CGFloat) -> CGFloat { max(2, (value * factor / 2).rounded(.down) * 2) }
@@ -255,10 +260,14 @@ final class RecorderController: ObservableObject {
     }
 
     private func makeOutputURL() -> URL {
+        settings.outputFolder().appendingPathComponent(Self.outputFileName(for: Date()))
+    }
+
+    nonisolated static func outputFileName(for date: Date) -> String {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd 'в' HH.mm.ss"
-        let name = "Запись \(formatter.string(from: Date())).mp4"
-        return settings.outputFolder().appendingPathComponent(name)
+        return "Запись \(formatter.string(from: date)).mp4"
     }
 
     private func targetScreen() -> NSScreen? {

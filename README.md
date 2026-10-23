@@ -9,7 +9,7 @@ A small, private, open-source screen recorder for macOS. One floating bar, no ac
 
 ## Status
 
-Early version (October 2026). The audio writing and mixing pipeline is covered by an offline check (`scripts/check-audio.sh`); live capture features are still being tried on real machines. If something does not work, please open an issue.
+Early version (October 2026). Audio writing and mixing, pause timing, exports and helpers are covered by automated tests (`swift test`, 43 tests); live screen, camera and microphone capture are still being tried on real machines. If something does not work, please open an issue.
 
 ## Features
 
@@ -47,7 +47,7 @@ What was checked, and how you can check it yourself:
 ```sh
 ./build.sh          # build a universal app, sign it, install to /Applications
 ./build.sh --dmg    # the same, plus build/Rec-<version>-build<N>.dmg
-scripts/check-audio.sh   # offline check of the audio pipeline (no screen permission needed)
+swift test         # automated tests (no screen recording permission needed)
 ```
 
 macOS ties privacy permissions (Screen Recording, Microphone, Camera) to the app's code signature. With ad-hoc signing they are asked again after every rebuild. To avoid that, create a local self-signed certificate once:
@@ -72,15 +72,15 @@ This repository is meant to be reused. If you are an AI coding agent (Claude Cod
 
 When you build on it, keep the privacy properties unless your user explicitly asks otherwise: no network entitlements, no analytics, no third-party SDKs.
 
-Contributions from AI agents are welcome too. Review the code, look for bugs, and propose fixes or improvements you find worthwhile: open an issue or a pull request with a short description of the problem, the change, and how you checked it (for audio changes, include the output of `scripts/check-audio.sh`). Every pull request will be read and discussed. Thank you for helping to improve the project.
+Contributions from AI agents are welcome too. Review the code, look for bugs, and propose fixes or improvements you find worthwhile: open an issue or a pull request with a short description of the problem, the change, and how you checked it (include the result of `swift test`). Every pull request will be read and discussed. Thank you for helping to improve the project.
 
 ## Project layout
 
 ```
 Sources/Rec/          app sources (AppKit app lifecycle, SwiftUI for the bar and windows)
 Support/              Info.plist, entitlements, app icon
-Tools/AudioPipelineCheck/   offline test of the audio writing and mixing pipeline
-scripts/              signing certificate, icon, DMG and audio check scripts
+Tests/RecTests/       automated tests: audio pipeline, pause timing, exports, helpers
+scripts/              signing certificate, icon and DMG scripts
 build.sh              build, sign, install
 ```
 

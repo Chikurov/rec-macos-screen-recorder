@@ -139,8 +139,14 @@ final class ResultModel: ObservableObject {
     }
 
     private func sibling(suffix: String, extension pathExtension: String) -> URL {
-        let folder = url.deletingLastPathComponent()
-        let base = url.deletingPathExtension().lastPathComponent + suffix
+        Self.uniqueURL(
+            in: url.deletingLastPathComponent(),
+            base: url.deletingPathExtension().lastPathComponent + suffix,
+            extension: pathExtension
+        )
+    }
+
+    nonisolated static func uniqueURL(in folder: URL, base: String, extension pathExtension: String) -> URL {
         var candidate = folder.appendingPathComponent(base).appendingPathExtension(pathExtension)
         var index = 2
         while FileManager.default.fileExists(atPath: candidate.path) {

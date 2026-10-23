@@ -5,6 +5,7 @@ let package = Package(
     name: "Rec",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "Rec", path: "Sources/Rec")
+        .executableTarget(name: "Rec", path: "Sources/Rec"),
+        .testTarget(name: "RecTests", dependencies: ["Rec"], path: "Tests/RecTests")
     ]
 )
