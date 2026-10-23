@@ -14,7 +14,6 @@ enum BarSkin: String, CaseIterable {
 }
 
 struct BarTheme {
-    let skin: BarSkin
     let icon: Color
     let iconMuted: Color
     let accent: Color
@@ -23,7 +22,6 @@ struct BarTheme {
     let badgeText: Color
 
     init(skin: BarSkin) {
-        self.skin = skin
         switch skin {
         case .dark:
             icon = Color.white.opacity(0.88)

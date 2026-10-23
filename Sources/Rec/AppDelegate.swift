@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var barPanel: ControlPanel?
     private var settingsWindow: NSWindow?
     private let resultWindow = RecordingResultWindow()
+    private var statusItem: NSStatusItem?
+    private var statusSecond = -1
     private var cancellables = Set<AnyCancellable>()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -15,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        RecordingEngine.removeTemporaryFiles()
         buildMainMenu()
         createBar()
 
@@ -24,6 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .combineLatest(controller.$source, controller.$cameraEnabled, AppSettings.shared.$skin)
             .sink { [weak self] _ in
                 DispatchQueue.main.async { self?.fitBar() }
+            }
+            .store(in: &cancellables)
+        controller.$phase
+            .combineLatest(controller.$elapsed)
+            .sink { [weak self] phase, elapsed in
+                self?.updateStatusItem(phase: phase, elapsed: elapsed)
             }
             .store(in: &cancellables)
 
@@ -113,6 +122,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard abs(frame.width - size.width) > 0.5 || abs(frame.height - size.height) > 0.5 else { return }
         let newFrame = NSRect(x: frame.midX - size.width / 2, y: frame.minY, width: size.width, height: size.height)
         panel.setFrame(newFrame, display: true)
+    }
+
+    // MARK: - Status Item
+
+    private func updateStatusItem(phase: RecorderController.Phase, elapsed: TimeInterval) {
+        guard phase == .recording || phase == .paused else {
+            if let statusItem {
+                NSStatusBar.system.removeStatusItem(statusItem)
+            }
+            statusItem = nil
+            statusSecond = -1
+            return
+        }
+
+        let isNew = statusItem == nil
+        let item = statusItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item
+
+        let second = Int(elapsed)
+        if isNew || second != statusSecond || item.menu?.items.first?.title != pauseTitle(for: phase) {
+            statusSecond = second
+            let title = NSMutableAttributedString(
+                string: phase == .paused ? "❚❚ " : "● ",
+                attributes: [.foregroundColor: phase == .paused ? NSColor.secondaryLabelColor : NSColor.systemRed]
+            )
+            title.append(NSAttributedString(
+                string: ControlBarView.format(elapsed),
+                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)]
+            ))
+            item.button?.attributedTitle = title
+            item.menu = makeStatusMenu(phase: phase)
+        }
+    }
+
+    private func pauseTitle(for phase: RecorderController.Phase) -> String {
+        phase == .paused ? "Продолжить" : "Пауза"
+    }
+
+    private func makeStatusMenu(phase: RecorderController.Phase) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ActionMenuItem(title: pauseTitle(for: phase)) { [weak self] in
+            self?.controller.togglePause()
+        })
+        menu.addItem(ActionMenuItem(title: "Остановить и сохранить") { [weak self] in
+            self?.controller.toggleRecording()
+        })
+        menu.addItem(.separator())
+        menu.addItem(ActionMenuItem(title: "Показать панель") { [weak self] in
+            self?.showBar()
+        })
+        return menu
     }
 
     // MARK: - Settings

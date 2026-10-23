@@ -20,7 +20,7 @@ There is no `.xcodeproj`: `Package.swift` builds the executable, `build.sh` asse
 
 ## Tests
 
-`Tests/RecTests` covers the audio pipeline (gap filling, mixing, track flags and titles, sync after toggling sources), pause timing, sample buffer retiming, trimming, Telegram and GIF export, output naming, capture geometry, hot keys and skins. The audio tests were checked against deliberately broken code: they fail when gap filling or mixing is removed.
+`Tests/RecTests` covers the audio pipeline (gap filling, mixing, track flags and titles, sync after toggling sources, copying tracks without re-encoding), pause timing, sample buffer retiming, microphone level, trimming, Telegram and GIF export, output naming, capture geometry and quality, remembered sources, temporary file cleanup, hot keys and skins. The audio tests were checked against deliberately broken code: they fail when gap filling or mixing is removed.
 
 Real capture cannot be tested headlessly: it needs the Screen Recording permission for the built app. Diagnostics go to the unified log: `/usr/bin/log show --last 10m --predicate 'subsystem == "com.chikurov.Rec"'` (in zsh, plain `log` is a shell builtin).
 
@@ -48,18 +48,19 @@ Real capture cannot be tested headlessly: it needs the Screen Recording permissi
 
 1. **Microphone on macOS 14.** `SCStream` can capture the microphone only from macOS 15. Here the microphone uses `AVCaptureSession` + `AVCaptureAudioDataOutput`. Its timestamps are on the session's `synchronizationClock`; convert them to the host clock with `CMSyncConvertTime` so they line up with `SCStream` buffers.
 2. **AAC tracks collapse gaps.** If you stop appending audio (mic turned off, system audio muted) and resume later, `AVAssetWriter` packs the samples back to back, and everything after the gap plays early. `AudioTrackWriter` inserts silence for every gap. `AudioPipelineTests` verifies this.
-3. **Players play only the first audio track.** With mic + system audio, the final file has an enabled "Mix" track (made with `AVAssetReaderAudioMixOutput`) and two disabled per-source tracks for editors. Titles are written as track metadata.
+3. **Players play only the first audio track.** With mic + system audio, the final file has an enabled "Mix" track (made with `AVAssetReaderAudioMixOutput`) and two disabled per-source tracks for editors. Only the mix is re-encoded; per-source tracks are copied as is, which is safe because gaps are already filled. Titles are written as track metadata.
 4. **Static screens shorten the video.** `SCStream` delivers only `.idle` frames when nothing changes, so the last appended frame may be far before the stop time. On stop, the last frame is appended again at the stop time before `endSession`.
 5. **`CMTime.invalid` compares greater than every valid time.** Use `.negativeInfinity` as the initial "last time", or the first frame is never written.
 6. **Pause** drops buffers and shifts later timestamps by the total paused duration. Buffers that arrive late from before the resume are dropped too, so timestamps stay monotonic.
-7. **Encoder limits.** Output size is capped at 3840 px on the long side and rounded to even numbers.
+7. **Encoder limits and load.** Output size is capped at 3840 px on the long side and rounded to even numbers. Frames are captured as 420v YUV with the BT.709 matrix, the format the H.264 encoder consumes, to avoid a per-frame conversion. "Compact" quality records at point size instead of Retina pixels.
 8. **Webcam in the recording.** The bubble is an app window; the display filter excludes the app but adds the bubble via `exceptingWindows`. Reuse the same window when the camera is toggled so its `CGWindowID` stays in the filter. A `desktopIndependentWindow` (single window) capture cannot include it.
 9. **Floating panel clicks.** The control panel is a non-activating `NSPanel` that never becomes key, and its hosting view accepts the first mouse. Otherwise the first click only activates the panel, and macOS may show the input-source (keyboard layout) indicator over it.
 10. **SwiftUI `Settings` scene.** In an app whose only SwiftUI scene is `Settings`, macOS can open that window by itself on launch or Dock click, and it may come back through window restoration. This project uses a plain AppKit lifecycle and disables window restoration.
 11. **Swift 5.9 top-level code is not `@MainActor`.** `main.swift` wraps startup in `MainActor.assumeIsolated`.
 12. **Permissions.** Screen Recording takes effect only after the app restarts. macOS ties permissions to the code signature, so use a stable (self-signed) identity during development.
 13. **Sandbox file access.** `assets.movies.read-write` for `~/Movies`, a security-scoped bookmark for a user-chosen folder. Trimming moves the original to the Trash instead of deleting it.
-14. **Scripts.** The `swift` interpreter may fail to link AppKit; compile helper scripts with `swiftc` (see `scripts/make-icon.sh`).
+14. **Temporary recordings.** The raw `.mov` lives in the sandbox temp folder with the `Rec-recording-` prefix; it is removed after saving, on failure, and on the next launch after a crash. If the final MP4 cannot be built, the raw recording is kept next to it as `.mov` instead of being lost.
+15. **Scripts.** The `swift` interpreter may fail to link AppKit; compile helper scripts with `swiftc` (see `scripts/make-icon.sh`).
 
 ## Contributing
 

@@ -24,7 +24,7 @@ if [[ -z "$IDENTITY" ]]; then
     echo "Чтобы этого избежать: scripts/create-signing-cert.sh"
 fi
 
-BUILD_NUMBER=$(( $(cat BUILD_NUMBER) + 1 ))
+BUILD_NUMBER=$(( $(cat BUILD_NUMBER 2>/dev/null || echo 0) + 1 ))
 
 echo "Сборка $BUILD_NUMBER…"
 mkdir -p build

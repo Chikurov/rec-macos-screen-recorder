@@ -2,7 +2,7 @@ import AVFoundation
 import AppKit
 import ScreenCaptureKit
 
-enum CaptureSource: Equatable {
+enum CaptureSource: Equatable, Codable {
     case display(CGDirectDisplayID, name: String)
     case application(bundleID: String, name: String)
     case window(CGWindowID, name: String)
@@ -14,6 +14,19 @@ enum CaptureSource: Equatable {
             return name
         case .area(let rect):
             return "Область \(Int(rect.width))×\(Int(rect.height))"
+        }
+    }
+
+    static func restored(_ saved: CaptureSource?, displays: [CGDirectDisplayID: String], screenFrames: [NSRect]) -> CaptureSource? {
+        switch saved {
+        case .display(let id, _):
+            return displays[id].map { .display(id, name: $0) }
+        case .application:
+            return saved
+        case .area(let rect):
+            return screenFrames.contains(where: { $0.contains(rect) }) ? saved : nil
+        case .window, .none:
+            return nil
         }
     }
 

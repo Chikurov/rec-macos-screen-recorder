@@ -14,10 +14,6 @@ final class CameraBubble: NSObject {
         panel.map { CGWindowID($0.windowNumber) }
     }
 
-    var isVisible: Bool {
-        panel?.isVisible == true
-    }
-
     func show(device: AVCaptureDevice, size: Double) throws {
         stopSession()
 

@@ -35,6 +35,7 @@ struct ControlBarView: View {
                 symbol: settings.microphoneEnabled ? "mic.fill" : "mic.slash",
                 isOn: settings.microphoneEnabled,
                 help: "Микрофон",
+                level: controller.isRecording && settings.microphoneEnabled ? controller.microphoneLevel : nil,
                 action: controller.toggleMicrophone,
                 menu: controller.showMicrophoneMenu
             )
@@ -50,6 +51,7 @@ struct ControlBarView: View {
                 symbol: controller.cameraEnabled ? "video.fill" : "video.slash",
                 isOn: controller.cameraEnabled,
                 help: "Камера",
+                level: nil,
                 action: controller.toggleCamera,
                 menu: controller.showCameraMenu
             )
@@ -235,12 +237,19 @@ private struct ToggleWithMenu: View {
     let symbol: String
     let isOn: Bool
     let help: String
+    let level: Double?
     let action: @MainActor () -> Void
     let menu: @MainActor () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             BarIconButton(symbol: symbol, tint: isOn ? theme.icon : theme.iconMuted, help: help, action: action)
+                .overlay(alignment: .bottom) {
+                    if let level {
+                        LevelMeter(level: level)
+                            .padding(.bottom, 3)
+                    }
+                }
             HoverButton(action: menu) {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
@@ -249,6 +258,23 @@ private struct ToggleWithMenu: View {
             }
             .help("\(help): выбрать устройство")
         }
+    }
+}
+
+private struct LevelMeter: View {
+    let level: Double
+    @Environment(\.barTheme) private var theme
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(theme.iconMuted.opacity(0.35))
+            Capsule()
+                .fill(level > 0.9 ? Color.orange : Color.green)
+                .frame(width: max(2, 20 * level))
+        }
+        .frame(width: 20, height: 3)
+        .animation(.linear(duration: 0.07), value: level)
+        .allowsHitTesting(false)
     }
 }
 
@@ -348,6 +374,17 @@ struct SettingsView: View {
             }
 
             Section("Видео") {
+                Picker("Качество", selection: $settings.quality) {
+                    ForEach(RecordingQuality.allCases, id: \.self) { quality in
+                        Text(quality.title).tag(quality)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(settings.quality == .high
+                     ? "Чёткость Retina. Около 100 МБ на минуту записи всего экрана."
+                     : "Обычное разрешение экрана. Файлы в 3–4 раза меньше, мелкий текст чуть мягче.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Picker("Частота кадров", selection: $settings.frameRate) {
                     Text("30 кадров/с").tag(30)
                     Text("60 кадров/с").tag(60)

@@ -28,10 +28,10 @@ enum AudioMixer {
         var pairs: [(AVAssetReaderOutput, AVAssetWriterInput)] = [(videoOutput, videoInput)]
 
         if audioTracks.count > 1 {
-            pairs.append(addAudio(tracks: audioTracks.map(\.track), title: "Микс", enabled: true, reader: reader, writer: writer))
+            pairs.append(addMix(of: audioTracks.map(\.track), reader: reader, writer: writer))
         }
         for entry in audioTracks {
-            pairs.append(addAudio(tracks: [entry.track], title: entry.title, enabled: audioTracks.count == 1, reader: reader, writer: writer))
+            pairs.append(try await addCopy(of: entry.track, title: entry.title, enabled: audioTracks.count == 1, reader: reader, writer: writer))
         }
 
         guard reader.startReading(), writer.startWriting() else {
@@ -55,13 +55,7 @@ enum AudioMixer {
         }
     }
 
-    private static func addAudio(
-        tracks: [AVAssetTrack],
-        title: String,
-        enabled: Bool,
-        reader: AVAssetReader,
-        writer: AVAssetWriter
-    ) -> (AVAssetReaderOutput, AVAssetWriterInput) {
+    private static func addMix(of tracks: [AVAssetTrack], reader: AVAssetReader, writer: AVAssetWriter) -> (AVAssetReaderOutput, AVAssetWriterInput) {
         let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 48_000,
@@ -71,18 +65,37 @@ enum AudioMixer {
             AVLinearPCMIsNonInterleaved: false
         ])
         reader.add(output)
-
         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: RecordingEngine.aacSettings(channels: 2))
+        input.metadata = titleMetadata("Микс")
+        writer.add(input)
+        return (output, input)
+    }
+
+    private static func addCopy(
+        of track: AVAssetTrack,
+        title: String,
+        enabled: Bool,
+        reader: AVAssetReader,
+        writer: AVAssetWriter
+    ) async throws -> (AVAssetReaderOutput, AVAssetWriterInput) {
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        let formatHint = try await track.load(.formatDescriptions).first
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: formatHint)
         input.marksOutputTrackAsEnabled = enabled
-        input.metadata = [AVMetadataIdentifier.commonIdentifierTitle, .quickTimeUserDataTrackName].map { identifier in
+        input.metadata = titleMetadata(title)
+        writer.add(input)
+        return (output, input)
+    }
+
+    private static func titleMetadata(_ title: String) -> [AVMetadataItem] {
+        [AVMetadataIdentifier.commonIdentifierTitle, .quickTimeUserDataTrackName].map { identifier in
             let item = AVMutableMetadataItem()
             item.identifier = identifier
             item.value = title as NSString
             item.extendedLanguageTag = "und"
             return item
         }
-        writer.add(input)
-        return (output, input)
     }
 
     private static func pump(from output: AVAssetReaderOutput, to input: AVAssetWriterInput, label: String) async {

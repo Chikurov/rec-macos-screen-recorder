@@ -13,10 +13,13 @@ final class RecorderController: ObservableObject {
         case saving
     }
 
-    @Published var source: CaptureSource = SourceCatalog.mainDisplaySource()
+    @Published var source: CaptureSource = SourceCatalog.mainDisplaySource() {
+        didSet { settings.lastSource = source }
+    }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var cameraEnabled = false
+    @Published private(set) var microphoneLevel: Double = 0
 
     var openSettings: () -> Void = {}
     var onRecordingSaved: (URL) -> Void = { _ in }
@@ -41,6 +44,10 @@ final class RecorderController: ObservableObject {
     init() {
         cameraBubble.onSizeChange = { [weak self] size in
             self?.settings.cameraSize = size
+        }
+        let displays = Dictionary(uniqueKeysWithValues: NSScreen.screens.map { ($0.displayID, $0.localizedName) })
+        if let restored = CaptureSource.restored(settings.lastSource, displays: displays, screenFrames: NSScreen.screens.map(\.frame)) {
+            source = restored
         }
     }
 
@@ -95,6 +102,7 @@ final class RecorderController: ObservableObject {
         }
         self.engine = nil
         elapsed = 0
+        microphoneLevel = 0
         phase = .idle
     }
 
@@ -134,6 +142,10 @@ final class RecorderController: ObservableObject {
             let engine = RecordingEngine()
             engine.onStreamStopped = { [weak self] _ in
                 Task { await self?.stopRecording() }
+            }
+            engine.onMicrophoneLevel = { [weak self] level in
+                guard let self, settings.microphoneEnabled else { return }
+                microphoneLevel = level
             }
             try await engine.start(options)
             self.engine = engine
@@ -218,7 +230,7 @@ final class RecorderController: ObservableObject {
             pointSize = area.size
         }
 
-        let scale = CGFloat(filter.pointPixelScale)
+        let scale = Self.captureScale(pointPixelScale: filter.pointPixelScale, quality: settings.quality)
         return RecordingOptions(
             filter: filter,
             sourceRect: sourceRect,
@@ -250,6 +262,13 @@ final class RecorderController: ObservableObject {
             width: clipped.width,
             height: clipped.height
         )
+    }
+
+    nonisolated static func captureScale(pointPixelScale: Float, quality: RecordingQuality) -> CGFloat {
+        switch quality {
+        case .high: return CGFloat(max(1, pointPixelScale))
+        case .compact: return 1
+        }
     }
 
     nonisolated static func encodableSize(_ size: CGSize) -> CGSize {
@@ -310,6 +329,7 @@ final class RecorderController: ObservableObject {
         guard enable else {
             try? engine.setMicrophone(nil)
             settings.microphoneEnabled = false
+            microphoneLevel = 0
             return
         }
         Task {

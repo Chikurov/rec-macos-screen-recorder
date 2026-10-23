@@ -108,9 +108,14 @@ final class ResultModel: ObservableObject {
             try await Self.exportTrimmed(asset, range: range, to: temporary)
 
             player.replaceCurrentItem(with: nil)
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            try FileManager.default.moveItem(at: temporary, to: url)
-            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+            defer { player.replaceCurrentItem(with: AVPlayerItem(url: url)) }
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try FileManager.default.moveItem(at: temporary, to: url)
+            } catch {
+                try? FileManager.default.removeItem(at: temporary)
+                throw error
+            }
             await refreshDetails()
         }
     }

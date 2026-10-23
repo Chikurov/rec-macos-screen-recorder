@@ -1,6 +1,18 @@
 import AppKit
 import Combine
 
+enum RecordingQuality: String, CaseIterable {
+    case high
+    case compact
+
+    var title: String {
+        switch self {
+        case .high: return "Высокое"
+        case .compact: return "Компактное"
+        }
+    }
+}
+
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
@@ -17,6 +29,7 @@ final class AppSettings: ObservableObject {
     @Published var showsCursor: Bool { didSet { defaults.set(showsCursor, forKey: Keys.showsCursor) } }
     @Published var revealAfterRecording: Bool { didSet { defaults.set(revealAfterRecording, forKey: Keys.revealAfterRecording) } }
     @Published var skin: BarSkin { didSet { defaults.set(skin.rawValue, forKey: Keys.skin) } }
+    @Published var quality: RecordingQuality { didSet { defaults.set(quality.rawValue, forKey: Keys.quality) } }
     @Published private(set) var folderPath: String = ""
 
     private enum Keys {
@@ -31,6 +44,8 @@ final class AppSettings: ObservableObject {
         static let revealAfterRecording = "revealAfterRecording"
         static let folderBookmark = "folderBookmark"
         static let skin = "skin"
+        static let quality = "quality"
+        static let lastSource = "lastSource"
     }
 
     private init() {
@@ -53,8 +68,14 @@ final class AppSettings: ObservableObject {
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
         revealAfterRecording = defaults.bool(forKey: Keys.revealAfterRecording)
         skin = defaults.string(forKey: Keys.skin).flatMap(BarSkin.init(rawValue:)) ?? .dark
+        quality = defaults.string(forKey: Keys.quality).flatMap(RecordingQuality.init(rawValue:)) ?? .high
         restoreCustomFolder()
         folderPath = outputFolder().path
+    }
+
+    var lastSource: CaptureSource? {
+        get { defaults.data(forKey: Keys.lastSource).flatMap { try? JSONDecoder().decode(CaptureSource.self, from: $0) } }
+        set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.lastSource) }
     }
 
     func outputFolder() -> URL {

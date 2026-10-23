@@ -35,7 +35,10 @@ enum RecordingError: LocalizedError {
 }
 
 final class RecordingEngine: NSObject {
+    static let temporaryPrefix = "Rec-recording-"
+
     var onStreamStopped: ((Error) -> Void)?
+    var onMicrophoneLevel: ((Double) -> Void)?
 
     private let queue = DispatchQueue(label: "com.chikurov.Rec.engine")
     private let microphoneQueue = DispatchQueue(label: "com.chikurov.Rec.microphone")
@@ -56,13 +59,42 @@ final class RecordingEngine: NSObject {
     private var lastVideoBuffer: CMSampleBuffer?
     private var lastVideoTime = CMTime.negativeInfinity
     private var timeline = PauseTimeline()
+    private var levelPeak: Float = 0
+    private var lastLevelReport = CMTime.zero
 
     func start(_ options: RecordingOptions) async throws {
         self.options = options
         isSystemAudioMuted = !options.systemAudio
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(Self.temporaryPrefix + UUID().uuidString)
+            .appendingPathExtension("mov")
         writerURL = url
 
+        do {
+            try await startWriting(to: url, options: options)
+        } catch {
+            if let stream {
+                try? await stream.stopCapture()
+            }
+            stream = nil
+            try? setMicrophone(nil)
+            writer?.cancelWriting()
+            writer = nil
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+        Logger.rec.info("capture started \(Int(options.pixelSize.width))x\(Int(options.pixelSize.height)) fps=\(options.frameRate) system=\(options.systemAudio) mic=\(options.microphone != nil)")
+    }
+
+    static func removeTemporaryFiles() {
+        let folder = FileManager.default.temporaryDirectory
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix(temporaryPrefix) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    private func startWriting(to url: URL, options: RecordingOptions) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings(for: options))
@@ -89,6 +121,8 @@ final class RecordingEngine: NSObject {
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
         configuration.showsCursor = options.showsCursor
         configuration.queueDepth = 6
+        configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        configuration.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         configuration.colorSpaceName = CGColorSpace.sRGB
         if let sourceRect = options.sourceRect {
             configuration.sourceRect = sourceRect
@@ -108,7 +142,6 @@ final class RecordingEngine: NSObject {
         }
 
         try await stream.startCapture()
-        Logger.rec.info("capture started \(Int(options.pixelSize.width))x\(Int(options.pixelSize.height)) fps=\(options.frameRate) system=\(options.systemAudio) mic=\(options.microphone != nil)")
     }
 
     func pause() {
@@ -175,15 +208,23 @@ final class RecordingEngine: NSObject {
         stream = nil
         try? setMicrophone(nil)
 
-        let writer = try await finishWriter()
         guard let options, let writerURL else { throw RecordingError.writerFailed(nil) }
+        defer { try? FileManager.default.removeItem(at: writerURL) }
 
+        let writer = try await finishWriter()
         guard writer.status == .completed else {
             throw RecordingError.writerFailed(writer.error)
         }
 
-        defer { try? FileManager.default.removeItem(at: writerURL) }
-        try await AudioMixer.mix(source: writerURL, destination: options.outputURL)
+        do {
+            try await AudioMixer.mix(source: writerURL, destination: options.outputURL)
+        } catch {
+            Logger.rec.error("mix failed: \(error.localizedDescription, privacy: .public)")
+            try? FileManager.default.removeItem(at: options.outputURL)
+            let fallback = options.outputURL.deletingPathExtension().appendingPathExtension("mov")
+            guard (try? FileManager.default.moveItem(at: writerURL, to: fallback)) != nil else { throw error }
+            return fallback
+        }
         Logger.rec.info("recording saved")
         return options.outputURL
     }
@@ -280,6 +321,40 @@ final class RecordingEngine: NSObject {
         ]
     }
 
+    private func reportLevel(of sampleBuffer: CMSampleBuffer) {
+        levelPeak = max(levelPeak, Self.peak(of: sampleBuffer))
+        let now = CMClockGetTime(hostClock)
+        guard (now - lastLevelReport).seconds >= 1.0 / 15 else { return }
+        let level = Self.normalizedLevel(peak: levelPeak)
+        levelPeak = 0
+        lastLevelReport = now
+        DispatchQueue.main.async { [weak self] in
+            self?.onMicrophoneLevel?(level)
+        }
+    }
+
+    static func peak(of sampleBuffer: CMSampleBuffer) -> Float {
+        guard let block = CMSampleBufferGetDataBuffer(sampleBuffer) else { return 0 }
+        var length = 0
+        var pointer: UnsafeMutablePointer<CChar>?
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
+              let pointer else { return 0 }
+        let count = length / MemoryLayout<Float>.size
+        return pointer.withMemoryRebound(to: Float.self, capacity: count) { samples in
+            var peak: Float = 0
+            for index in 0..<count {
+                peak = max(peak, abs(samples[index]))
+            }
+            return peak
+        }
+    }
+
+    static func normalizedLevel(peak: Float) -> Double {
+        guard peak > 0 else { return 0 }
+        let decibels = 20 * log10(Double(peak))
+        return min(1, max(0, (decibels + 50) / 50))
+    }
+
     static func shifted(_ sampleBuffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
         var count: CMItemCount = 0
         CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
@@ -331,6 +406,7 @@ extension RecordingEngine: SCStreamOutput, SCStreamDelegate {
 extension RecordingEngine: AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard output === microphoneOutput, let clock = microphoneSession?.synchronizationClock else { return }
+        reportLevel(of: sampleBuffer)
         let time = sampleBuffer.presentationTimeStamp
         let hostTime = CMSyncConvertTime(time, from: clock, to: hostClock)
         handleAudio(sampleBuffer, track: microphoneTrack, clockOffset: time - hostTime)

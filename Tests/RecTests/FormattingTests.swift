@@ -114,12 +114,33 @@ final class ThemeTests: XCTestCase {
 
     func testThemesDifferBySkin() {
         XCTAssertNotEqual(BarTheme(skin: .dark).icon, BarTheme(skin: .metal).icon)
-        XCTAssertEqual(BarTheme(skin: .metal).skin, .metal)
     }
 
     func testCameraBubbleSizesAreOrdered() {
         let values = CameraBubble.sizes.map(\.value)
         XCTAssertEqual(values, values.sorted())
         XCTAssertTrue(values.contains(200))
+    }
+}
+
+final class QualityTests: XCTestCase {
+    func testHighQualityUsesRetinaScale() {
+        XCTAssertEqual(RecorderController.captureScale(pointPixelScale: 2, quality: .high), 2)
+        XCTAssertEqual(RecorderController.captureScale(pointPixelScale: 1, quality: .high), 1)
+    }
+
+    func testCompactQualityUsesPointSize() {
+        XCTAssertEqual(RecorderController.captureScale(pointPixelScale: 2, quality: .compact), 1)
+        let compact = RecorderController.encodableSize(CGSize(width: 1440, height: 900))
+        let high = RecorderController.encodableSize(CGSize(width: 1440 * 2, height: 900 * 2))
+        XCTAssertEqual(high.width * high.height / (compact.width * compact.height), 4)
+    }
+
+    func testBrokenScaleFallsBackToOne() {
+        XCTAssertEqual(RecorderController.captureScale(pointPixelScale: 0, quality: .high), 1)
+    }
+
+    func testQualityTitles() {
+        XCTAssertEqual(RecordingQuality.allCases.map(\.title), ["Высокое", "Компактное"])
     }
 }
