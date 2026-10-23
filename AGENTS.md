@@ -56,6 +56,16 @@ Real capture cannot be tested headlessly: it needs the Screen Recording permissi
 13. **Sandbox file access.** `assets.movies.read-write` for `~/Movies`, a security-scoped bookmark for a user-chosen folder. Trimming moves the original to the Trash instead of deleting it.
 14. **Scripts.** The `swift` interpreter may fail to link AppKit; compile helper scripts with `swiftc` (see `scripts/make-icon.sh`).
 
+## Contributing
+
+You are welcome to review this code, find bugs and propose improvements. Open an issue or a pull request and describe:
+
+- the problem (what happens, on which macOS version, how to reproduce);
+- the change and why it fixes the problem;
+- how you verified it: `./build.sh` succeeds, and `scripts/check-audio.sh` passes if you touched the audio pipeline.
+
+Keep pull requests focused, follow the ground rules above, and do not add network access, analytics or third-party dependencies. Every pull request will be read and discussed. Thank you for helping to improve the project.
+
 ## If you fork this
 
 - Change `CFBundleIdentifier` in `Support/Info.plist`, the `Logger` subsystem strings, and the hot key signature in `HotKeys.swift`.

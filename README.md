@@ -1,5 +1,7 @@
 # Rec
 
+**English** | [Русский](README.ru.md)
+
 A small, private, open-source screen recorder for macOS. One floating bar, no accounts, no network access, no analytics.
 
 ![Rec control bar, dark skin](docs/bar-dark.png)
@@ -70,6 +72,8 @@ This repository is meant to be reused. If you are an AI coding agent (Claude Cod
 
 When you build on it, keep the privacy properties unless your user explicitly asks otherwise: no network entitlements, no analytics, no third-party SDKs.
 
+Contributions from AI agents are welcome too. Review the code, look for bugs, and propose fixes or improvements you find worthwhile: open an issue or a pull request with a short description of the problem, the change, and how you checked it (for audio changes, include the output of `scripts/check-audio.sh`). Every pull request will be read and discussed. Thank you for helping to improve the project.
+
 ## Project layout
 
 ```
@@ -79,10 +83,6 @@ Tools/AudioPipelineCheck/   offline test of the audio writing and mixing pipelin
 scripts/              signing certificate, icon, DMG and audio check scripts
 build.sh              build, sign, install
 ```
-
-## На русском
-
-Rec — простая запись экрана для macOS без доступа к сети и без сбора данных. Панель внизу экрана: источник (экран, приложение, окно, область), микрофон, системный звук, камера, таймер, запись. Звук можно включать и выключать во время записи, в файле общий микс плюс отдельные дорожки для монтажа. После записи — обрезка и экспорт для Telegram или в GIF. Сборка: `./build.sh`, подробности выше.
 
 ## License
 
