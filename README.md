@@ -77,6 +77,10 @@
   </tr>
 </table>
 
+## What's new
+
+📋 **[Rec 1.1 — changelog](CHANGELOG.md)**
+
 ## Shortcuts
 
 | Action | Default shortcut |
