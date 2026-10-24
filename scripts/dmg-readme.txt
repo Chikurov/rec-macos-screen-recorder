@@ -1,38 +1,30 @@
-Rec — запись экрана
+Rec — screen recorder
 
-Нужна macOS 14 или новее.
+Requires macOS 14 or later.
 
-УСТАНОВКА
-Перетащите Rec в папку Applications (Программы).
+INSTALL
+Drag Rec to the Applications folder.
 
-ПЕРВЫЙ ЗАПУСК
-Приложение подписано личным сертификатом, а не через Apple, поэтому
-при первом запуске macOS скажет, что не может проверить разработчика.
-Это нужно разрешить один раз:
+FIRST LAUNCH
+Rec is signed with a personal certificate, not through Apple, so macOS
+blocks the first launch. Allow it once: open Rec, close the warning,
+then System Settings → Privacy & Security → Open Anyway at the bottom.
 
-  • macOS 14: в «Программах» нажмите на Rec правой кнопкой →
-    «Открыть» → в окне снова «Открыть».
+PERMISSIONS
+System Settings → Privacy & Security:
+  • Screen & System Audio Recording — required.
+    After turning it on, quit and reopen Rec.
+  • Microphone and Camera — macOS asks the first time you turn them on.
 
-  • macOS 15 и новее: откройте Rec, в предупреждении нажмите «Готово»,
-    затем «Системные настройки» → «Конфиденциальность и безопасность» →
-    внизу «Всё равно открыть».
+HOW TO USE
+A bar appears at the bottom of the screen:
+  source ▾ — a display, an app, a window or an area;
+  microphone, system audio, camera (▾ — choose a device);
+  timer — countdown before recording;
+  red button — start / stop recording.
+  ⌃⌥R — start / stop, ⌃⌥P — pause, ⌃⌥Z — zoom.
+Drag the camera bubble with the mouse, right-click it to resize.
+Recordings are saved to Movies/Rec (change it in Settings, ⚙︎ button).
 
-РАЗРЕШЕНИЯ
-«Системные настройки» → «Конфиденциальность и безопасность»:
-  • «Запись экрана и системного звука» — обязательно.
-    После включения завершите и снова откройте Rec.
-  • «Микрофон» и «Камера» — macOS спросит сама при первом включении.
-
-КАК ПОЛЬЗОВАТЬСЯ
-Внизу экрана появится панель:
-  источник ▾ — экран, приложение, окно или область;
-  микрофон, системный звук, камера (▾ — выбрать устройство);
-  таймер — отсчёт перед записью;
-  красная кнопка — начать / остановить запись.
-  ⌃⌥R — начать / остановить, ⌃⌥P — пауза.
-Окошко камеры можно перетащить мышью, правый клик — размер.
-Записи сохраняются в «Фильмы/Rec» (меняется в настройках, кнопка ⚙︎).
-
-ПРИВАТНОСТЬ
-У приложения нет доступа к интернету: записи остаются только
-на вашем компьютере.
+PRIVACY
+Rec has no internet access: recordings stay on your Mac.

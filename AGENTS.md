@@ -82,7 +82,7 @@ Keep pull requests focused, follow the ground rules above, and do not add networ
 
 ## Releases
 
-Each release gets an entry at the top of `CHANGELOG.md` and `CHANGELOG.ru.md`: what changed, how it was done, what was fixed and the known limitations. The "What's new" link in both READMEs names the latest version. Bump `CFBundleShortVersionString` in `Support/Info.plist`; `build.sh` sets the build number.
+Each release gets an entry at the top of `CHANGELOG.md`: what changed, how it was done, what was fixed and the known limitations. The footer of `README.md` names the latest version next to its "What's new" link. Bump `CFBundleShortVersionString` in `Support/Info.plist`; `build.sh` sets the build number.
 
 ## If you fork this
 

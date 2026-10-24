@@ -29,7 +29,7 @@ trap 'rm -rf "$STAGING"' EXIT
 
 ditto "$APP" "$STAGING/Rec.app"
 ln -s /Applications "$STAGING/Applications"
-cp scripts/dmg-readme.txt "$STAGING/Как установить.txt"
+cp scripts/dmg-readme.txt "$STAGING/How to install.txt"
 
 echo "Упаковка…"
 rm -f "$DMG"
