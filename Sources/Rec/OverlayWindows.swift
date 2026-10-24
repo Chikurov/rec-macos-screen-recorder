@@ -20,6 +20,55 @@ final class ActionMenuItem: NSMenuItem {
     }
 }
 
+@MainActor
+enum MenuAnchor {
+    private static var pendingAnchor: NSRect?
+    private static var pendingAt = Date.distantPast
+    private static var closedAnchor: NSRect?
+    private static var closedAt = Date.distantPast
+
+    static func screenRect(forBarFrame frame: CGRect) -> NSRect? {
+        guard frame != .zero, let panel = NSApp.windows.first(where: { $0 is ControlPanel }) else { return nil }
+        return NSRect(
+            x: panel.frame.minX + frame.minX,
+            y: panel.frame.maxY - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    static func prepare(_ anchor: NSRect?, now: Date = Date()) {
+        pendingAnchor = anchor
+        pendingAt = now
+    }
+
+    static func take(now: Date = Date()) -> NSRect? {
+        defer { pendingAnchor = nil }
+        return now.timeIntervalSince(pendingAt) < 2 ? pendingAnchor : nil
+    }
+
+    static func menuOrigin(below anchor: NSRect, menuHeight: CGFloat) -> NSPoint {
+        let visible = NSScreen.screens.first { $0.frame.intersects(anchor) }?.visibleFrame ?? .infinite
+        return menuOrigin(below: anchor, menuHeight: menuHeight, visibleFrame: visible)
+    }
+
+    nonisolated static func menuOrigin(below anchor: NSRect, menuHeight: CGFloat, visibleFrame visible: NSRect) -> NSPoint {
+        let below = NSPoint(x: anchor.minX, y: anchor.minY - 4)
+        guard below.y - menuHeight < visible.minY else { return below }
+        return NSPoint(x: anchor.minX, y: anchor.maxY + 4 + menuHeight)
+    }
+
+    static func justClosed(by anchor: NSRect?, now: Date = Date()) -> Bool {
+        guard let anchor, let closedAnchor else { return false }
+        return closedAnchor == anchor && now.timeIntervalSince(closedAt) < 0.35
+    }
+
+    static func didClose(anchor: NSRect?, now: Date = Date()) {
+        closedAnchor = anchor
+        closedAt = now
+    }
+}
+
 extension NSMenu {
     func addSection(_ title: String) {
         if !items.isEmpty {
@@ -30,8 +79,12 @@ extension NSMenu {
         addItem(header)
     }
 
+    @MainActor
     func popUpAtMouse() {
-        popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        let anchor = MenuAnchor.take()
+        let location = anchor.map { MenuAnchor.menuOrigin(below: $0, menuHeight: size.height) } ?? NSEvent.mouseLocation
+        popUp(positioning: nil, at: location, in: nil)
+        MenuAnchor.didClose(anchor: anchor)
     }
 }
 
@@ -78,24 +131,153 @@ final class CountdownWindow {
 }
 
 final class AreaBorderWindow {
+    var onMove: ((CGVector) -> Void)?
+    var onMoveEnded: (() -> Void)?
+
+    private var panel: NSPanel?
+    private var handle: NSPanel?
+    private var isHandleHidden = false
+    private let handleSize = NSSize(width: 118, height: 24)
+
+    func show(around rect: NSRect) {
+        let inset: CGFloat = 4
+        let frame = rect.insetBy(dx: -inset, dy: -inset)
+        if let panel {
+            panel.setFrame(frame, display: true)
+        } else {
+            let panel = makePanel(frame: frame, ignoresMouse: true)
+            panel.contentView = DashedBorderView()
+            panel.orderFrontRegardless()
+            self.panel = panel
+        }
+
+        let handleFrame = handleFrame(for: frame)
+        if let handle {
+            handle.setFrame(handleFrame, display: true)
+        } else {
+            let handle = makePanel(frame: handleFrame, ignoresMouse: false)
+            let view = MoveHandleView()
+            view.onDrag = { [weak self] delta in self?.onMove?(delta) }
+            view.onDragEnded = { [weak self] in self?.onMoveEnded?() }
+            handle.contentView = view
+            self.handle = handle
+        }
+        if !isHandleHidden {
+            handle?.orderFrontRegardless()
+        }
+    }
+
+    func setHandleHidden(_ hidden: Bool) {
+        isHandleHidden = hidden
+        if hidden {
+            handle?.orderOut(nil)
+        } else if panel != nil {
+            handle?.orderFrontRegardless()
+        }
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+        handle?.orderOut(nil)
+        panel = nil
+        handle = nil
+        isHandleHidden = false
+    }
+
+    private func handleFrame(for frame: NSRect) -> NSRect {
+        let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.frame ?? frame
+        let x = frame.midX - handleSize.width / 2
+        let above = NSRect(x: x, y: frame.maxY + 4, width: handleSize.width, height: handleSize.height)
+        if above.maxY <= screen.maxY {
+            return above
+        }
+        return NSRect(x: x, y: frame.minY - handleSize.height - 4, width: handleSize.width, height: handleSize.height)
+    }
+
+    private func makePanel(frame: NSRect, ignoresMouse: Bool) -> NSPanel {
+        let panel = NonActivatingPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.ignoresMouseEvents = ignoresMouse
+        panel.hasShadow = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        return panel
+    }
+}
+
+private final class NonActivatingPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+}
+
+private final class MoveHandleView: NSView {
+    var onDrag: ((CGVector) -> Void)?
+    var onDragEnded: (() -> Void)?
+    private var lastLocation: NSPoint?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { NSCursor.openHand.set() }
+    override func mouseMoved(with event: NSEvent) { NSCursor.openHand.set() }
+    override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
+
+    override func mouseDown(with event: NSEvent) {
+        lastLocation = NSEvent.mouseLocation
+        NSCursor.closedHand.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let location = NSEvent.mouseLocation
+        if let lastLocation {
+            onDrag?(CGVector(dx: location.x - lastLocation.x, dy: location.y - lastLocation.y))
+        }
+        lastLocation = location
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastLocation = nil
+        NSCursor.openHand.set()
+        onDragEnded?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        NSColor.systemRed.withAlphaComponent(0.92).setFill()
+        path.fill()
+        let text = "⠿  Переместить" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attributes)
+    }
+}
+
+@MainActor
+final class ZoomFrameWindow {
     private var panel: NSPanel?
 
     func show(around rect: NSRect) {
-        hide()
-        let inset: CGFloat = 4
-        let panel = NSPanel(
-            contentRect: rect.insetBy(dx: -inset, dy: -inset),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
+        let frame = rect.insetBy(dx: -3, dy: -3)
+        if let panel {
+            panel.setFrame(frame, display: true)
+            return
+        }
+        let panel = NonActivatingPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.ignoresMouseEvents = true
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = DashedBorderView()
+        panel.contentView = ZoomFrameView()
         panel.orderFrontRegardless()
         self.panel = panel
     }
@@ -103,6 +285,19 @@ final class AreaBorderWindow {
     func hide() {
         panel?.orderOut(nil)
         panel = nil
+    }
+}
+
+private final class ZoomFrameView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(rect: bounds.insetBy(dx: 1.5, dy: 1.5))
+        path.lineWidth = 3
+        NSColor.black.withAlphaComponent(0.28).setStroke()
+        path.stroke()
+        path.lineWidth = 1.5
+        path.setLineDash([7, 5], count: 2, phase: 0)
+        NSColor.white.withAlphaComponent(0.95).setStroke()
+        path.stroke()
     }
 }
 

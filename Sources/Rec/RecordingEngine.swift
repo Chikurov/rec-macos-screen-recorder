@@ -46,6 +46,9 @@ final class RecordingEngine: NSObject {
 
     private var options: RecordingOptions?
     private var stream: SCStream?
+    private var configuration: SCStreamConfiguration?
+    @MainActor private var pendingSourceRect: CGRect?
+    @MainActor private var isUpdatingConfiguration = false
     private var writer: AVAssetWriter?
     private var writerURL: URL?
     private var isSystemAudioMuted = false
@@ -132,6 +135,7 @@ final class RecordingEngine: NSObject {
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
 
+        self.configuration = configuration
         let stream = SCStream(filter: options.filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
@@ -153,6 +157,30 @@ final class RecordingEngine: NSObject {
     func resume() {
         queue.async { [self] in
             timeline.resume(at: CMClockGetTime(hostClock))
+        }
+    }
+
+    @MainActor
+    func updateSourceRect(_ rect: CGRect) {
+        pendingSourceRect = rect
+        guard !isUpdatingConfiguration else { return }
+        applyPendingSourceRect()
+    }
+
+    @MainActor
+    private func applyPendingSourceRect() {
+        guard let rect = pendingSourceRect, let stream, let configuration else { return }
+        pendingSourceRect = nil
+        isUpdatingConfiguration = true
+        configuration.sourceRect = rect
+        Task { @MainActor in
+            do {
+                try await stream.updateConfiguration(configuration)
+            } catch {
+                Logger.rec.error("source rect update failed: \(error.localizedDescription, privacy: .public)")
+            }
+            isUpdatingConfiguration = false
+            applyPendingSourceRect()
         }
     }
 
@@ -293,7 +321,7 @@ final class RecordingEngine: NSObject {
     private func videoSettings(for options: RecordingOptions) -> [String: Any] {
         let width = Int(options.pixelSize.width)
         let height = Int(options.pixelSize.height)
-        let bitRate = max(2_000_000, Int(Double(width * height * options.frameRate) * 0.1))
+        let bitRate = Self.videoBitRate(width: width, height: height, frameRate: options.frameRate)
         return [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
@@ -310,6 +338,10 @@ final class RecordingEngine: NSObject {
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
             ]
         ]
+    }
+
+    static func videoBitRate(width: Int, height: Int, frameRate: Int) -> Int {
+        max(2_000_000, Int(Double(width * height * frameRate) * 0.1))
     }
 
     static func aacSettings(channels: Int) -> [String: Any] {

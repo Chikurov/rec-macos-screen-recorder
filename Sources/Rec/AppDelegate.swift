@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Quartz
 import SwiftUI
 
 @MainActor
@@ -7,7 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = RecorderController()
     private var barPanel: ControlPanel?
     private var settingsWindow: NSWindow?
-    private let resultWindow = RecordingResultWindow()
+    private let actions = RecordingActions()
+    private lazy var thumbnail = RecordingThumbnail(actions: actions)
     private var statusItem: NSStatusItem?
     private var statusSecond = -1
     private var cancellables = Set<AnyCancellable>()
@@ -21,14 +23,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMainMenu()
         createBar()
 
-        controller.openSettings = { [weak self] in self?.showSettings() }
-        controller.onRecordingSaved = { [weak self] url in self?.resultWindow.show(url: url) }
-        controller.$phase
-            .combineLatest(controller.$source, controller.$cameraEnabled, AppSettings.shared.$skin)
-            .sink { [weak self] _ in
-                DispatchQueue.main.async { self?.fitBar() }
-            }
-            .store(in: &cancellables)
+        actions.onProgress = { [weak self] url, message in
+            self?.thumbnail.setBusy(message, for: url)
+        }
+        controller.recordingMenu = { [weak self] url, duration in
+            self?.actions.menu(for: url, duration: duration)
+        }
+        controller.onRecordingSaved = { [weak self] url in
+            guard let self else { return }
+            thumbnail.show(url: url, above: barPanel?.isVisible == true ? barPanel?.frame : nil)
+        }
+        Publishers.MergeMany(
+            controller.$phase.map { _ in () }.eraseToAnyPublisher(),
+            controller.$source.map { _ in () }.eraseToAnyPublisher(),
+            controller.$cameraEnabled.map { _ in () }.eraseToAnyPublisher(),
+            AppSettings.shared.$skin.map { _ in () }.eraseToAnyPublisher(),
+            AppSettings.shared.$hiddenButtons.map { _ in () }.eraseToAnyPublisher(),
+            AppSettings.shared.$slimBar.map { _ in () }.eraseToAnyPublisher()
+        )
+        .sink { [weak self] in
+            DispatchQueue.main.async { self?.fitBar() }
+        }
+        .store(in: &cancellables)
         controller.$phase
             .combineLatest(controller.$elapsed)
             .sink { [weak self] phase, elapsed in
@@ -43,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller.toggleRecording()
             case .togglePause:
                 controller.togglePause()
+            case .toggleZoom:
+                controller.toggleZoom()
             }
         }
         HotKeyManager.shared.start()
@@ -75,15 +93,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(ActionMenuItem(title: "Показать панель") { [weak self] in
             self?.showBar()
         })
+        menu.addItem(.separator())
+        if let lastRecording = controller.lastRecordingMenuItem() {
+            menu.addItem(lastRecording)
+        }
+        menu.addItem(ActionMenuItem(title: "Открыть папку с записями") { [weak self] in
+            self?.controller.openRecordingsFolder()
+        })
+        menu.addItem(ActionMenuItem(title: "Настройки…") { [weak self] in
+            self?.showSettings()
+        })
         return menu
     }
 
     // MARK: - Bar
 
     private func createBar() {
-        let hostingView = FirstClickHostingView(rootView: ControlBarView(controller: controller, onMinimize: { [weak self] in
-            self?.barPanel?.orderOut(nil)
-        }))
+        let hostingView = FirstClickHostingView(rootView: ControlBarView(
+            controller: controller,
+            onOpenSettings: { [weak self] in self?.showSettings() },
+            onHide: { [weak self] in self?.barPanel?.orderOut(nil) }
+        ))
         let size = hostingView.fittingSize
 
         let panel = ControlPanel(
@@ -120,8 +150,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let size = content.fittingSize
         let frame = panel.frame
         guard abs(frame.width - size.width) > 0.5 || abs(frame.height - size.height) > 0.5 else { return }
-        let newFrame = NSRect(x: frame.midX - size.width / 2, y: frame.minY, width: size.width, height: size.height)
-        panel.setFrame(newFrame, display: true)
+        panel.setFrame(Self.barFrame(current: frame, fitting: size, visible: panel.screen?.visibleFrame), display: true)
+        panel.invalidateShadow()
+    }
+
+    nonisolated static func barFrame(current: NSRect, fitting size: NSSize, visible: NSRect?) -> NSRect {
+        var frame = NSRect(x: current.minX, y: current.minY, width: size.width, height: size.height)
+        if let visible, frame.maxX > visible.maxX {
+            frame.origin.x = max(visible.minX, visible.maxX - frame.width)
+        }
+        return frame
+    }
+
+    // MARK: - Quick Look
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        actions.previewURL != nil
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = actions
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
     }
 
     // MARK: - Status Item
@@ -179,17 +231,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         if settingsWindow == nil {
+            let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 420),
-                styleMask: [.titled, .closable],
+                contentRect: NSRect(x: 0, y: 0, width: 700, height: min(820, visible.height - 80)),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "Настройки Rec"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView())
-            window.setContentSize(window.contentView?.fittingSize ?? NSSize(width: 500, height: 420))
+            let hosting = NSHostingView(rootView: SettingsView())
+            hosting.sizingOptions = [.minSize]
+            window.contentView = hosting
             window.center()
+            window.setFrameAutosaveName("RecSettings")
+            if window.frame.height > visible.height {
+                var frame = window.frame
+                frame.size.height = visible.height
+                frame.origin.y = visible.minY
+                window.setFrame(frame, display: false)
+            }
             settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)
