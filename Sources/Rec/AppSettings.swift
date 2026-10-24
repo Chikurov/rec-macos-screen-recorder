@@ -1,6 +1,37 @@
 import AppKit
 import Combine
 
+enum BarButton: String, CaseIterable {
+    case microphone
+    case camera
+    case systemAudio
+    case countdown
+    case zoom
+    case folder
+
+    var title: String {
+        switch self {
+        case .microphone: return "Микрофон"
+        case .camera: return "Камера"
+        case .systemAudio: return "Системный звук"
+        case .countdown: return "Таймер"
+        case .zoom: return "Зум"
+        case .folder: return "Папка с записями"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .microphone: return "mic.fill"
+        case .camera: return "video.fill"
+        case .systemAudio: return "display"
+        case .countdown: return "timer"
+        case .zoom: return "plus.magnifyingglass"
+        case .folder: return "folder"
+        }
+    }
+}
+
 enum RecordingQuality: String, CaseIterable {
     case high
     case compact
@@ -27,9 +58,10 @@ final class AppSettings: ObservableObject {
     @Published var countdown: Int { didSet { defaults.set(countdown, forKey: Keys.countdown) } }
     @Published var frameRate: Int { didSet { defaults.set(frameRate, forKey: Keys.frameRate) } }
     @Published var showsCursor: Bool { didSet { defaults.set(showsCursor, forKey: Keys.showsCursor) } }
-    @Published var revealAfterRecording: Bool { didSet { defaults.set(revealAfterRecording, forKey: Keys.revealAfterRecording) } }
     @Published var skin: BarSkin { didSet { defaults.set(skin.rawValue, forKey: Keys.skin) } }
     @Published var quality: RecordingQuality { didSet { defaults.set(quality.rawValue, forKey: Keys.quality) } }
+    @Published var slimBar: Bool { didSet { defaults.set(slimBar, forKey: Keys.slimBar) } }
+    @Published var hiddenButtons: Set<BarButton> { didSet { defaults.set(hiddenButtons.map(\.rawValue).sorted(), forKey: Keys.hiddenButtons) } }
     @Published private(set) var folderPath: String = ""
 
     private enum Keys {
@@ -41,11 +73,12 @@ final class AppSettings: ObservableObject {
         static let countdown = "countdown"
         static let frameRate = "frameRate"
         static let showsCursor = "showsCursor"
-        static let revealAfterRecording = "revealAfterRecording"
         static let folderBookmark = "folderBookmark"
         static let skin = "skin"
         static let quality = "quality"
         static let lastSource = "lastSource"
+        static let hiddenButtons = "hiddenButtons"
+        static let slimBar = "slimBar"
     }
 
     private init() {
@@ -56,7 +89,6 @@ final class AppSettings: ObservableObject {
             Keys.countdown: 3,
             Keys.frameRate: 30,
             Keys.showsCursor: true,
-            Keys.revealAfterRecording: true
         ])
         microphoneEnabled = defaults.bool(forKey: Keys.microphoneEnabled)
         microphoneID = defaults.string(forKey: Keys.microphoneID)
@@ -66,9 +98,10 @@ final class AppSettings: ObservableObject {
         countdown = defaults.integer(forKey: Keys.countdown)
         frameRate = defaults.integer(forKey: Keys.frameRate)
         showsCursor = defaults.bool(forKey: Keys.showsCursor)
-        revealAfterRecording = defaults.bool(forKey: Keys.revealAfterRecording)
-        skin = defaults.string(forKey: Keys.skin).flatMap(BarSkin.init(rawValue:)) ?? .dark
+        skin = defaults.string(forKey: Keys.skin).flatMap(BarSkin.init(rawValue:)) ?? .system
         quality = defaults.string(forKey: Keys.quality).flatMap(RecordingQuality.init(rawValue:)) ?? .high
+        slimBar = defaults.bool(forKey: Keys.slimBar)
+        hiddenButtons = Set((defaults.stringArray(forKey: Keys.hiddenButtons) ?? []).compactMap(BarButton.init(rawValue:)))
         restoreCustomFolder()
         folderPath = outputFolder().path
     }

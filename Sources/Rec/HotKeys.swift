@@ -87,11 +87,13 @@ struct HotKey: Codable, Equatable {
 enum HotKeyAction: String, CaseIterable {
     case toggleRecording
     case togglePause
+    case toggleZoom
 
     var title: String {
         switch self {
         case .toggleRecording: return "Начать / остановить запись"
         case .togglePause: return "Пауза / продолжить"
+        case .toggleZoom: return "Приблизить / отдалить"
         }
     }
 
@@ -101,6 +103,8 @@ enum HotKeyAction: String, CaseIterable {
             return HotKey(keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(controlKey | optionKey))
         case .togglePause:
             return HotKey(keyCode: UInt32(kVK_ANSI_P), carbonModifiers: UInt32(controlKey | optionKey))
+        case .toggleZoom:
+            return HotKey(keyCode: UInt32(kVK_ANSI_Z), carbonModifiers: UInt32(controlKey | optionKey))
         }
     }
 

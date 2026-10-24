@@ -2,14 +2,23 @@ import AppKit
 import SwiftUI
 
 enum BarSkin: String, CaseIterable {
+    case system
     case dark
+    case light
     case metal
 
     var title: String {
         switch self {
-        case .dark: return "Тёмный"
+        case .system: return "Как в системе"
+        case .dark: return "Тёмная"
+        case .light: return "Светлая"
         case .metal: return "Белый металл"
         }
+    }
+
+    func resolved(isDarkAppearance: Bool) -> BarSkin {
+        guard self == .system else { return self }
+        return isDarkAppearance ? .dark : .light
     }
 }
 
@@ -20,23 +29,46 @@ struct BarTheme {
     let hover: Color
     let border: Color
     let badgeText: Color
+    let recordIdleFill: Color
+    let recordIdleText: Color
+    let recordIdleBorder: Color
+    let activeFill: Color
 
     init(skin: BarSkin) {
         switch skin {
-        case .dark:
-            icon = Color.white.opacity(0.88)
-            iconMuted = Color.white.opacity(0.45)
-            accent = Color(red: 0.36, green: 0.62, blue: 1.0)
-            hover = Color.white.opacity(0.08)
-            border = Color.white.opacity(0.08)
-            badgeText = Color(red: 0.067, green: 0.075, blue: 0.094)
-        case .metal:
-            icon = Color(red: 0.17, green: 0.19, blue: 0.22)
-            iconMuted = Color(red: 0.17, green: 0.19, blue: 0.22).opacity(0.45)
-            accent = Color(red: 0.12, green: 0.45, blue: 0.95)
-            hover = Color.black.opacity(0.07)
-            border = Color.black.opacity(0.14)
+        case .dark, .system:
+            icon = .white
+            iconMuted = Color.white.opacity(0.55)
+            accent = .white
+            hover = Color.white.opacity(0.13)
+            border = Color.white.opacity(0.24)
+            badgeText = .black
+            recordIdleFill = Color(white: 0.2)
+            recordIdleText = .white
+            recordIdleBorder = Color.white.opacity(0.2)
+            activeFill = Color.white.opacity(0.16)
+        case .light:
+            icon = Color.black.opacity(0.92)
+            iconMuted = Color.black.opacity(0.5)
+            accent = .black
+            hover = Color.black.opacity(0.08)
+            border = Color.black.opacity(0.22)
             badgeText = .white
+            recordIdleFill = Color(red: 0.16, green: 0.18, blue: 0.21)
+            recordIdleText = .white
+            recordIdleBorder = .clear
+            activeFill = Color.black.opacity(0.09)
+        case .metal:
+            icon = Color(red: 0.10, green: 0.12, blue: 0.15)
+            iconMuted = Color(red: 0.10, green: 0.12, blue: 0.15).opacity(0.55)
+            accent = Color(red: 0.12, green: 0.45, blue: 0.95)
+            hover = Color.black.opacity(0.08)
+            border = Color.black.opacity(0.2)
+            badgeText = .white
+            recordIdleFill = Color(red: 0.16, green: 0.18, blue: 0.21)
+            recordIdleText = .white
+            recordIdleBorder = .clear
+            activeFill = Color.black.opacity(0.10)
         }
     }
 }
@@ -54,14 +86,35 @@ extension EnvironmentValues {
 
 struct BarBackground: View {
     let skin: BarSkin
-    private let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    var cornerRadius: CGFloat = 20
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous) }
 
     var body: some View {
         switch skin {
-        case .dark:
+        case .dark, .system:
             shape
-                .fill(Color(red: 0.067, green: 0.075, blue: 0.094))
-                .overlay(shape.strokeBorder(Color.white.opacity(0.08)))
+                .fill(Color(white: 0.03))
+                .overlay(shape.strokeBorder(Color.white.opacity(0.32), lineWidth: 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: max(0, cornerRadius - 1), style: .continuous)
+                        .inset(by: 1)
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white.opacity(0.10), .clear], startPoint: .top, endPoint: .center),
+                            lineWidth: 1
+                        )
+                )
+        case .light:
+            shape
+                .fill(Color.white)
+                .overlay(shape.strokeBorder(Color.black.opacity(0.26), lineWidth: 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: max(0, cornerRadius - 1), style: .continuous)
+                        .inset(by: 1)
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white, .clear], startPoint: .top, endPoint: .center),
+                            lineWidth: 1
+                        )
+                )
         case .metal:
             ZStack {
                 shape.fill(

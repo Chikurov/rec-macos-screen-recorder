@@ -63,6 +63,22 @@ final class CaptureGeometryTests: XCTestCase {
         XCTAssertEqual(area, CGRect(x: 100, y: 400, width: 400, height: 300))
     }
 
+    @MainActor
+    func testMenuOpensAboveButtonWhenNoRoomBelow() {
+        let screen = NSRect(x: 0, y: 25, width: 1440, height: 850)
+        let low = NSRect(x: 300, y: 40, width: 200, height: 40)
+        XCTAssertEqual(MenuAnchor.menuOrigin(below: low, menuHeight: 300, visibleFrame: screen), NSPoint(x: 300, y: 384))
+        let high = NSRect(x: 300, y: 700, width: 200, height: 40)
+        XCTAssertEqual(MenuAnchor.menuOrigin(below: high, menuHeight: 300, visibleFrame: screen), NSPoint(x: 300, y: 696))
+    }
+
+    func testScreenRectIsInverseOfCaptureArea() {
+        let screen = NSRect(x: 1440, y: -200, width: 1920, height: 1080)
+        let rect = NSRect(x: 1700, y: 100, width: 640, height: 360)
+        let area = RecorderController.captureArea(for: rect, in: screen)
+        XCTAssertEqual(RecorderController.screenRect(forCaptureArea: area, in: screen), rect)
+    }
+
     func testCaptureAreaOnSecondaryScreen() {
         let screen = NSRect(x: 1440, y: -200, width: 1920, height: 1080)
         let area = RecorderController.captureArea(for: NSRect(x: 1540, y: 0, width: 500, height: 400), in: screen)
@@ -107,12 +123,34 @@ final class HotKeyTests: XCTestCase {
 
 final class ThemeTests: XCTestCase {
     func testSkins() {
-        XCTAssertEqual(BarSkin.allCases, [.dark, .metal])
-        XCTAssertEqual(BarSkin.allCases.map(\.title), ["Тёмный", "Белый металл"])
+        XCTAssertEqual(BarSkin.allCases, [.system, .dark, .light, .metal])
+        XCTAssertEqual(BarSkin.allCases.map(\.title), ["Как в системе", "Тёмная", "Светлая", "Белый металл"])
         XCTAssertNil(BarSkin(rawValue: "glass"))
     }
 
+    func testSystemSkinFollowsAppearance() {
+        XCTAssertEqual(BarSkin.system.resolved(isDarkAppearance: true), .dark)
+        XCTAssertEqual(BarSkin.system.resolved(isDarkAppearance: false), .light)
+        XCTAssertEqual(BarSkin.metal.resolved(isDarkAppearance: true), .metal)
+        XCTAssertEqual(BarSkin.light.resolved(isDarkAppearance: true), .light)
+    }
+
+    func testSystemAudioIconSymbolsExist() {
+        for name in ["display", "speaker.wave.2.fill", "speaker.slash.fill", "plus.magnifyingglass", "minus.magnifyingglass", "gearshape", "paperplane"] {
+            XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+        }
+    }
+
+    func testEveryOptionalButtonHasAValidSymbol() {
+        XCTAssertEqual(BarButton.allCases.count, 6)
+        for button in BarButton.allCases {
+            XCTAssertNotNil(NSImage(systemSymbolName: button.symbol, accessibilityDescription: nil), button.rawValue)
+            XCTAssertFalse(button.title.isEmpty)
+        }
+    }
+
     func testThemesDifferBySkin() {
+        XCTAssertNotEqual(BarTheme(skin: .dark).icon, BarTheme(skin: .light).icon)
         XCTAssertNotEqual(BarTheme(skin: .dark).icon, BarTheme(skin: .metal).icon)
     }
 

@@ -98,7 +98,7 @@ enum AudioMixer {
         }
     }
 
-    private static func pump(from output: AVAssetReaderOutput, to input: AVAssetWriterInput, label: String) async {
+    static func pump(from output: AVAssetReaderOutput, to input: AVAssetWriterInput, label: String) async {
         let queue = DispatchQueue(label: "com.chikurov.Rec.mix.\(label)")
         final class PumpState: @unchecked Sendable {
             var finished = false

@@ -20,7 +20,7 @@ There is no `.xcodeproj`: `Package.swift` builds the executable, `build.sh` asse
 
 ## Tests
 
-`Tests/RecTests` covers the audio pipeline (gap filling, mixing, track flags and titles, sync after toggling sources, copying tracks without re-encoding), pause timing, sample buffer retiming, microphone level, trimming, Telegram and GIF export, output naming, capture geometry and quality, remembered sources, temporary file cleanup, hot keys and skins. The audio tests were checked against deliberately broken code: they fail when gap filling or mixing is removed.
+`Tests/RecTests` covers the audio pipeline (gap filling, mixing, track flags and titles, sync after toggling sources, copying tracks without re-encoding), pause timing, sample buffer retiming, microphone level, compressed copy and GIF export (including the guard against overwriting the original and one export at a time), the post-recording thumbnail, output naming, capture geometry and quality, remembered sources, temporary file cleanup, hot keys and skins. `InterfaceTests` render the control bar offscreen and check that its size does not change between idle, countdown, recording, paused and saving (in every skin, regular and slim), that the settings window fits a 400 pt high window and scrolls, menu anchoring and toggle-close, bar resizing, persisted setting names and record button contrast. `RecorderController.setPhaseForTesting` exists only in debug builds for these tests. The audio tests were checked against deliberately broken code: they fail when gap filling or mixing is removed.
 
 Real capture cannot be tested headlessly: it needs the Screen Recording permission for the built app. Diagnostics go to the unified log: `/usr/bin/log show --last 10m --predicate 'subsystem == "com.chikurov.Rec"'` (in zsh, plain `log` is a shell builtin).
 
@@ -30,8 +30,8 @@ Real capture cannot be tested headlessly: it needs the Screen Recording permissi
 |---|---|
 | `main.swift` | AppKit entry point. No SwiftUI `App`/`Settings` scene on purpose (see pitfalls). |
 | `AppDelegate.swift` | Main menu, floating control panel, Dock menu, settings window, quit-while-recording. |
-| `ControlBar.swift` | SwiftUI control bar, record button / Stop capsule, settings view. |
-| `BarTheme.swift` | Skins (dark, brushed metal), theme environment, first-click hosting view. |
+| `ControlBar.swift` | SwiftUI control bar, record button / Stop capsule, regular and slim sizes (`BarMetrics`). |
+| `BarTheme.swift` | Skins (follow system, dark, light, brushed metal), theme environment, first-click hosting view. |
 | `RecorderController.swift` | State machine (idle → countdown → recording ⇄ paused → saving), menus, permissions, builds `SCContentFilter` for each source. |
 | `RecordingEngine.swift` | `SCStream` video + system audio, `AVCaptureSession` microphone, `AVAssetWriter`, pause, retiming. |
 | `PauseTimeline.swift` | Pause/resume bookkeeping: which buffers to drop and how to shift timestamps. |
@@ -39,8 +39,11 @@ Real capture cannot be tested headlessly: it needs the Screen Recording permissi
 | `AudioMixer.swift` | Post-processing: temporary `.mov` → final `.mp4` with Mix + separate tracks. |
 | `CaptureSource.swift` | Displays / apps / windows / area, device lists. |
 | `CameraBubble.swift` | Round webcam window on the desktop. |
-| `OverlayWindows.swift` | Countdown, area selection, area border, `NSMenu` helpers. |
-| `RecordingResultWindow.swift` | Player with native trimming, Telegram export, GIF export. |
+| `OverlayWindows.swift` | Countdown, area selection, area border with move handle, zoom frame, `NSMenu` helpers and `MenuAnchor` (menus open under their button, a second click closes them). |
+| `RecordingExports.swift` | Compressed copy (own bitrate, not AVAssetExportSession presets), GIF, file naming. |
+| `RecordingActions.swift` | Quick Look preview, open in QuickTime for trimming, Finder, export with save panels and progress. |
+| `RecordingThumbnail.swift` | Post-recording thumbnail above the bar with an action strip: click previews, drag exports the file. |
+| `SettingsView.swift` | Settings window: skin tiles, slim bar, optional buttons, quality cards with size estimates, folder, hot keys. |
 | `HotKeys.swift` | Global shortcuts via Carbon `RegisterEventHotKey` plus a SwiftUI recorder. |
 | `AppSettings.swift` | `UserDefaults`-backed settings, security-scoped bookmark for a custom folder. |
 
@@ -58,9 +61,14 @@ Real capture cannot be tested headlessly: it needs the Screen Recording permissi
 10. **SwiftUI `Settings` scene.** In an app whose only SwiftUI scene is `Settings`, macOS can open that window by itself on launch or Dock click, and it may come back through window restoration. This project uses a plain AppKit lifecycle and disables window restoration.
 11. **Swift 5.9 top-level code is not `@MainActor`.** `main.swift` wraps startup in `MainActor.assumeIsolated`.
 12. **Permissions.** Screen Recording takes effect only after the app restarts. macOS ties permissions to the code signature, so use a stable (self-signed) identity during development.
-13. **Sandbox file access.** `assets.movies.read-write` for `~/Movies`, a security-scoped bookmark for a user-chosen folder. Trimming moves the original to the Trash instead of deleting it.
-14. **Temporary recordings.** The raw `.mov` lives in the sandbox temp folder with the `Rec-recording-` prefix; it is removed after saving, on failure, and on the next launch after a crash. If the final MP4 cannot be built, the raw recording is kept next to it as `.mov` instead of being lost.
-15. **Scripts.** The `swift` interpreter may fail to link AppKit; compile helper scripts with `swiftc` (see `scripts/make-icon.sh`).
+13. **Sandbox file access.** `assets.movies.read-write` for `~/Movies`, a security-scoped bookmark for a user-chosen folder, save panels for exports.
+    Third-party apps cannot get the Quick Look "Trim" button (QuickLookUI has no editing API on macOS), so trimming is delegated to QuickTime Player.
+14. **Live source changes.** Zoom and moving the area use `SCStream.updateConfiguration` with a new `sourceRect`; updates are coalesced so at most one is in flight. Zoom targets are expanded to the output aspect ratio, otherwise ScreenCaptureKit letterboxes.
+15. **Export presets are not small.** `AVAssetExportPreset1280x720` targets roughly 8 Mbit/s, which can exceed a compact recording. Compressed copies use `AVAssetWriter` with an explicit bitrate instead.
+16. **Temporary recordings.** The raw `.mov` lives in the sandbox temp folder with the `Rec-recording-` prefix; it is removed after saving, on failure, and on the next launch after a crash. If the final MP4 cannot be built, the raw recording is kept next to it as `.mov` instead of being lost.
+17. **Exports never touch the original.** A save panel lets the user pick the recording itself and confirm "Replace"; deleting the target first would destroy the source. `RecordingExports.isSameFile` (path, symlinks and file identity) guards this, and only one export runs at a time.
+18. **The bar must not change size.** Anything that appears or disappears when recording starts moves the bar under the cursor. Keep controls in place and disable them instead; `InterfaceTests` render the bar in every phase and compare sizes.
+19. **Scripts.** The `swift` interpreter may fail to link AppKit; compile helper scripts with `swiftc` (see `scripts/make-icon.sh`).
 
 ## Contributing
 
@@ -75,4 +83,4 @@ Keep pull requests focused, follow the ground rules above, and do not add networ
 ## If you fork this
 
 - Change `CFBundleIdentifier` in `Support/Info.plist`, the `Logger` subsystem strings, and the hot key signature in `HotKeys.swift`.
-- Keep `swift test` passing. Pure logic lives in small types or `nonisolated static` helpers (`PauseTimeline`, `RecorderController.encodableSize`, `captureArea`, `ResultModel.uniqueURL`) so it can be tested without screen access.
+- Keep `swift test` passing. Pure logic lives in small types or `nonisolated static` helpers (`PauseTimeline`, `RecorderController.encodableSize`, `captureArea`, `RecordingExports.uniqueURL`, `AppDelegate.barFrame`) so it can be tested without screen access.

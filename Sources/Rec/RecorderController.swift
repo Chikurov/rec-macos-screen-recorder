@@ -17,12 +17,31 @@ final class RecorderController: ObservableObject {
         didSet { settings.lastSource = source }
     }
     @Published private(set) var phase: Phase = .idle
+    #if DEBUG
+    func setPhaseForTesting(_ phase: Phase) { self.phase = phase }
+    #endif
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var cameraEnabled = false
     @Published private(set) var microphoneLevel: Double = 0
+    @Published private(set) var isZoomed = false
 
-    var openSettings: () -> Void = {}
+    private struct CaptureGeometry {
+        let screenFrame: NSRect
+        var baseRect: CGRect
+    }
+
+    private var geometry: CaptureGeometry?
+    private var currentSourceRect: CGRect?
+    private var zoomTimer: Timer?
+    private var movingArea: NSRect?
+
+    var canZoom: Bool {
+        isRecording && geometry != nil
+    }
+
     var onRecordingSaved: (URL) -> Void = { _ in }
+    var recordingMenu: (URL, Double) -> NSMenu? = { _, _ in nil }
+    private var lastRecording: (url: URL, duration: Double)?
 
     let settings = AppSettings.shared
 
@@ -30,6 +49,7 @@ final class RecorderController: ObservableObject {
     private let cameraBubble = CameraBubble()
     private let countdownWindow = CountdownWindow()
     private let areaBorder = AreaBorderWindow()
+    private let zoomFrame = ZoomFrameWindow()
     private var areaSelector: AreaSelector?
     private var countdownTask: Task<Void, Never>?
     private var timer: Timer?
@@ -88,15 +108,21 @@ final class RecorderController: ObservableObject {
     func stopRecording() async {
         guard let engine, isRecording else { return }
         phase = .saving
+        finishMovingArea()
         timer?.invalidate()
         timer = nil
+        zoomTimer?.invalidate()
+        zoomTimer = nil
+        isZoomed = false
+        geometry = nil
+        currentSourceRect = nil
         areaBorder.hide()
+        zoomFrame.hide()
 
         do {
             let url = try await engine.stop()
-            if settings.revealAfterRecording {
-                onRecordingSaved(url)
-            }
+            lastRecording = (url, elapsed)
+            onRecordingSaved(url)
         } catch {
             showError(error.localizedDescription)
         }
@@ -138,7 +164,7 @@ final class RecorderController: ObservableObject {
 
     private func startRecording() async {
         do {
-            let options = try await makeOptions()
+            let (options, geometry) = try await makeOptions()
             let engine = RecordingEngine()
             engine.onStreamStopped = { [weak self] _ in
                 Task { await self?.stopRecording() }
@@ -149,12 +175,17 @@ final class RecorderController: ObservableObject {
             }
             try await engine.start(options)
             self.engine = engine
+            self.geometry = geometry
+            currentSourceRect = geometry?.baseRect
+            isZoomed = false
             startedAt = Date()
             pausedSeconds = 0
             pausedAt = nil
             phase = .recording
             startTimer()
             if case .area(let rect) = source {
+                areaBorder.onMove = { [weak self] delta in self?.moveArea(by: delta) }
+                areaBorder.onMoveEnded = { [weak self] in self?.finishMovingArea() }
                 areaBorder.show(around: rect)
             }
         } catch {
@@ -174,7 +205,7 @@ final class RecorderController: ObservableObject {
         }
     }
 
-    private func makeOptions() async throws -> RecordingOptions {
+    private func makeOptions() async throws -> (RecordingOptions, CaptureGeometry?) {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let pid = ProcessInfo.processInfo.processIdentifier
         let ownApp = content.applications.first { $0.processID == pid }
@@ -186,6 +217,13 @@ final class RecorderController: ObservableObject {
         let filter: SCContentFilter
         var sourceRect: CGRect?
         var pointSize: CGSize
+        var geometry: CaptureGeometry?
+
+        func displayGeometry(_ display: SCDisplay) -> CaptureGeometry? {
+            NSScreen.screens.first { $0.displayID == display.displayID }.map {
+                CaptureGeometry(screenFrame: $0.frame, baseRect: CGRect(origin: .zero, size: $0.frame.size))
+            }
+        }
 
         func displayFilter(_ display: SCDisplay) -> SCContentFilter {
             SCContentFilter(display: display, excludingApplications: ownApp.map { [$0] } ?? [], exceptingWindows: bubble.map { [$0] } ?? [])
@@ -198,6 +236,7 @@ final class RecorderController: ObservableObject {
             }
             filter = displayFilter(display)
             pointSize = CGSize(width: display.width, height: display.height)
+            geometry = displayGeometry(display)
 
         case .application(let bundleID, let name):
             guard let app = content.applications.first(where: { $0.bundleIdentifier == bundleID }) else {
@@ -211,6 +250,7 @@ final class RecorderController: ObservableObject {
             }
             filter = SCContentFilter(display: display, including: applications, exceptingWindows: bubble != nil ? ownWindowsExceptBubble : [])
             pointSize = CGSize(width: display.width, height: display.height)
+            geometry = displayGeometry(display)
 
         case .window(let id, let name):
             guard let window = content.windows.first(where: { $0.windowID == id }) else {
@@ -228,10 +268,11 @@ final class RecorderController: ObservableObject {
             filter = displayFilter(display)
             sourceRect = area
             pointSize = area.size
+            geometry = CaptureGeometry(screenFrame: screen.frame, baseRect: area)
         }
 
         let scale = Self.captureScale(pointPixelScale: filter.pointPixelScale, quality: settings.quality)
-        return RecordingOptions(
+        let options = RecordingOptions(
             filter: filter,
             sourceRect: sourceRect,
             pixelSize: Self.encodableSize(CGSize(width: pointSize.width * scale, height: pointSize.height * scale)),
@@ -240,6 +281,129 @@ final class RecorderController: ObservableObject {
             systemAudio: settings.systemAudioEnabled,
             microphone: settings.microphoneEnabled ? DeviceCatalog.microphone(id: settings.microphoneID) : nil,
             outputURL: makeOutputURL()
+        )
+        return (options, geometry)
+    }
+
+    // MARK: - Zoom and area movement
+
+    func toggleZoom() {
+        guard canZoom, let geometry else {
+            let menu = NSMenu()
+            let hint = NSMenuItem(title: "Зум работает во время записи экрана или области:", action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            menu.addItem(hint)
+            let detail = NSMenuItem(title: "нажмите 🔍 и выделите фрагмент, который нужно приблизить", action: nil, keyEquivalent: "")
+            detail.isEnabled = false
+            menu.addItem(detail)
+            menu.popUpAtMouse()
+            return
+        }
+        if isZoomed {
+            isZoomed = false
+            zoomFrame.hide()
+            animateSourceRect(to: geometry.baseRect)
+            return
+        }
+        Task {
+            guard let selection = await AreaSelector().select(), isRecording, let geometry = self.geometry else { return }
+            let local = Self.captureArea(for: selection, in: geometry.screenFrame)
+            guard local.width >= 20, local.height >= 20 else { return }
+            isZoomed = true
+            areaBorder.setHandleHidden(true)
+            animateSourceRect(to: Self.zoomRect(for: local, matching: geometry.baseRect))
+        }
+    }
+
+    private func animateSourceRect(to target: CGRect) {
+        guard let engine else { return }
+        zoomTimer?.invalidate()
+        let start = currentSourceRect ?? target
+        let startedAt = Date()
+        let duration: TimeInterval = 0.5
+        zoomTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                let progress = min(1, Date().timeIntervalSince(startedAt) / duration)
+                let rect = Self.interpolate(from: start, to: target, progress: Self.easeOut(progress))
+                self.currentSourceRect = rect
+                engine.updateSourceRect(rect)
+                if self.isZoomed, let geometry = self.geometry {
+                    self.zoomFrame.show(around: Self.screenRect(forCaptureArea: rect, in: geometry.screenFrame))
+                }
+                if progress >= 1 {
+                    timer.invalidate()
+                    self.zoomTimer = nil
+                    if !self.isZoomed {
+                        self.areaBorder.setHandleHidden(false)
+                    }
+                }
+            }
+        }
+    }
+
+    private func moveArea(by delta: CGVector) {
+        guard case .area(let rect) = source, isRecording, !isZoomed, var geometry, let engine else { return }
+        let current = movingArea ?? rect
+        let moved = Self.clampedArea(current.offsetBy(dx: delta.dx, dy: delta.dy), in: geometry.screenFrame)
+        guard moved != current else { return }
+        movingArea = moved
+        geometry.baseRect = Self.captureArea(for: moved, in: geometry.screenFrame)
+        self.geometry = geometry
+        currentSourceRect = geometry.baseRect
+        areaBorder.show(around: moved)
+        engine.updateSourceRect(geometry.baseRect)
+    }
+
+    private func finishMovingArea() {
+        if let movingArea {
+            source = .area(movingArea)
+        }
+        movingArea = nil
+    }
+
+    nonisolated static func clampedArea(_ rect: NSRect, in screenFrame: NSRect) -> NSRect {
+        var result = rect
+        result.origin.x = min(max(result.minX, screenFrame.minX), screenFrame.maxX - result.width)
+        result.origin.y = min(max(result.minY, screenFrame.minY), screenFrame.maxY - result.height)
+        return result
+    }
+
+    nonisolated static func zoomRect(for selection: CGRect, matching base: CGRect, maximumZoom: CGFloat = 4) -> CGRect {
+        let aspect = base.width / base.height
+        var size = selection.size
+        if size.width / size.height > aspect {
+            size.height = size.width / aspect
+        } else {
+            size.width = size.height * aspect
+        }
+        let minimumWidth = base.width / maximumZoom
+        if size.width < minimumWidth {
+            size = CGSize(width: minimumWidth, height: minimumWidth / aspect)
+        }
+        if size.width > base.width {
+            size = base.size
+        }
+        var origin = CGPoint(x: selection.midX - size.width / 2, y: selection.midY - size.height / 2)
+        origin.x = min(max(origin.x, base.minX), base.maxX - size.width)
+        origin.y = min(max(origin.y, base.minY), base.maxY - size.height)
+        return CGRect(origin: origin, size: size)
+    }
+
+    nonisolated static func easeOut(_ t: Double) -> Double {
+        1 - pow(1 - min(max(t, 0), 1), 4)
+    }
+
+    nonisolated static func interpolate(from start: CGRect, to end: CGRect, progress: Double) -> CGRect {
+        let p = CGFloat(progress)
+        return CGRect(
+            x: start.minX + (end.minX - start.minX) * p,
+            y: start.minY + (end.minY - start.minY) * p,
+            width: start.width + (end.width - start.width) * p,
+            height: start.height + (end.height - start.height) * p
         )
     }
 
@@ -262,6 +426,43 @@ final class RecorderController: ObservableObject {
             width: clipped.width,
             height: clipped.height
         )
+    }
+
+    nonisolated static func screenRect(forCaptureArea area: CGRect, in screenFrame: NSRect) -> NSRect {
+        NSRect(
+            x: screenFrame.minX + area.minX,
+            y: screenFrame.maxY - area.maxY,
+            width: area.width,
+            height: area.height
+        )
+    }
+
+    struct QualityEstimate: Equatable {
+        let size: CGSize
+        let aspect: String
+        let megabytesPerMinute: Int
+    }
+
+    nonisolated static func qualityEstimate(pointSize: CGSize, scale: CGFloat, frameRate: Int) -> QualityEstimate {
+        let size = encodableSize(CGSize(width: pointSize.width * scale, height: pointSize.height * scale))
+        let videoBits = RecordingEngine.videoBitRate(width: Int(size.width), height: Int(size.height), frameRate: frameRate)
+        let audioBits = 160_000 * 2 + 96_000
+        let megabytes = Double(videoBits + audioBits) * 60 / 8 / 1_000_000
+        return QualityEstimate(size: size, aspect: aspectRatio(pointSize), megabytesPerMinute: Int((megabytes / 5).rounded() * 5))
+    }
+
+    nonisolated static func aspectRatio(_ size: CGSize) -> String {
+        guard size.width > 0, size.height > 0 else { return "—" }
+        let ratio = size.width / size.height
+        let known: [(String, CGFloat)] = [("16:9", 16.0 / 9), ("16:10", 16.0 / 10), ("4:3", 4.0 / 3), ("3:2", 3.0 / 2), ("21:9", 64.0 / 27), ("1:1", 1)]
+        if let match = known.first(where: { abs($0.1 - ratio) < 0.02 }) {
+            return match.0
+        }
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        let width = Int(size.width.rounded())
+        let height = Int(size.height.rounded())
+        let divisor = max(1, gcd(width, height))
+        return "\(width / divisor):\(height / divisor)"
     }
 
     nonisolated static func captureScale(pointPixelScale: Float, quality: RecordingQuality) -> CGFloat {
@@ -468,20 +669,17 @@ final class RecorderController: ObservableObject {
         menu.popUpAtMouse()
     }
 
-    func showMoreMenu() {
-        let menu = NSMenu()
-        menu.addItem(ActionMenuItem(title: "Открыть папку с записями", image: symbol("folder")) { [weak self] in
-            guard let self else { return }
-            NSWorkspace.shared.open(settings.outputFolder())
-        })
-        menu.addItem(ActionMenuItem(title: "Настройки…", image: symbol("gearshape")) { [weak self] in
-            self?.openSettings()
-        })
-        menu.addItem(.separator())
-        menu.addItem(ActionMenuItem(title: "Выйти из Rec", image: symbol("power")) {
-            NSApp.terminate(nil)
-        })
-        menu.popUpAtMouse()
+    func lastRecordingMenuItem() -> NSMenuItem? {
+        guard let lastRecording, FileManager.default.fileExists(atPath: lastRecording.url.path),
+              let submenu = recordingMenu(lastRecording.url, lastRecording.duration) else { return nil }
+        let item = NSMenuItem(title: "Последняя запись", action: nil, keyEquivalent: "")
+        item.image = symbol("film")
+        item.submenu = submenu
+        return item
+    }
+
+    func openRecordingsFolder() {
+        NSWorkspace.shared.open(settings.outputFolder())
     }
 
     private func selectArea() async {
